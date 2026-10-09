@@ -1,0 +1,291 @@
+import React, { useState, useEffect } from 'react';
+import {
+  BookOpen, Brain, Sparkles, CheckCircle2,
+  ChevronRight, ArrowRight, Code, MessageSquareText,
+  Clock, RefreshCw
+} from 'lucide-react';
+import { api } from '../lib/api.ts';
+import { Subject, Topic, LearningMaterial } from '../types/index.ts';
+
+interface LearningMaterialsViewProps {
+  initialSubjectId?: string;
+  initialTopicId?: string;
+  onNavigateToPractice: (topicId: string) => void;
+  onNavigateToTutor: (topicId: string) => void;
+}
+
+export const LearningMaterialsView: React.FC<LearningMaterialsViewProps> = ({
+  initialSubjectId,
+  initialTopicId,
+  onNavigateToPractice,
+  onNavigateToTutor,
+}) => {
+  const [subjects, setSubjects] = useState<Subject[]>([]);
+  const [topics, setTopics] = useState<Topic[]>([]);
+  const [materials, setMaterials] = useState<LearningMaterial[]>([]);
+  const [selectedSubjectId, setSelectedSubjectId] = useState<string>(initialSubjectId || '');
+  const [selectedTopicId, setSelectedTopicId] = useState<string>(initialTopicId || '');
+  const [activeMaterial, setActiveMaterial] = useState<LearningMaterial | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    async function loadData() {
+      setLoading(true);
+      try {
+        const [subs, allTopics, allMats] = await Promise.all([
+          api.getSubjects(),
+          api.getTopics(),
+          api.getMaterials()
+        ]);
+        setSubjects(subs);
+        setTopics(allTopics);
+        setMaterials(allMats);
+
+        const subId = initialSubjectId || (subs.length > 0 ? subs[0].id : '');
+        setSelectedSubjectId(subId);
+
+        const filteredTopics = allTopics.filter(t => t.subjectId === subId);
+        const topId = initialTopicId || (filteredTopics.length > 0 ? filteredTopics[0].id : '');
+        setSelectedTopicId(topId);
+
+        const mat = allMats.find(m => m.topicId === topId) || allMats[0] || null;
+        setActiveMaterial(mat);
+      } catch (err) {
+        console.error('Failed to load learning materials:', err);
+      } finally {
+        setLoading(false);
+      }
+    }
+    loadData();
+  }, [initialSubjectId, initialTopicId]);
+
+  const handleSelectSubject = (sId: string) => {
+    setSelectedSubjectId(sId);
+    const subTopics = topics.filter(t => t.subjectId === sId);
+    if (subTopics.length > 0) {
+      setSelectedTopicId(subTopics[0].id);
+      const mat = materials.find(m => m.topicId === subTopics[0].id) || null;
+      setActiveMaterial(mat);
+    }
+  };
+
+  const handleSelectTopic = (tId: string) => {
+    setSelectedTopicId(tId);
+    const mat = materials.find(m => m.topicId === tId) || null;
+    setActiveMaterial(mat);
+  };
+
+  if (loading) {
+    return (
+      <div className="max-w-7xl mx-auto px-4 py-24 text-center space-y-4">
+        <RefreshCw className="w-8 h-8 text-indigo-600 animate-spin mx-auto" />
+        <h2 className="text-xl font-bold text-slate-800">Loading Curriculum Materials...</h2>
+        <p className="text-xs text-slate-500">Parsing structured notes and formula breakdowns.</p>
+      </div>
+    );
+  }
+
+  const currentSubjectTopics = topics.filter(t => t.subjectId === selectedSubjectId);
+  const currentTopic = topics.find(t => t.id === selectedTopicId);
+
+  return (
+    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
+      {/* Subject Header Navigation */}
+      <div className="space-y-3">
+        <span className="text-xs font-bold uppercase tracking-wider text-indigo-600">
+          Curriculum Repository
+        </span>
+        <h1 className="text-2xl sm:text-3xl font-extrabold text-slate-900 tracking-tight">
+          Concept Materials & Technical Notes
+        </h1>
+
+        {/* Subject Filter Tabs */}
+        <div className="flex items-center gap-2 overflow-x-auto pb-2 pt-1">
+          {subjects.map((sub) => (
+            <button
+              key={sub.id}
+              onClick={() => handleSelectSubject(sub.id)}
+              className={`px-4 py-2 text-xs font-semibold rounded-xl whitespace-nowrap shrink-0 transition-all cursor-pointer ${
+                selectedSubjectId === sub.id
+                  ? 'bg-slate-900 text-white shadow-xs'
+                  : 'bg-white border border-slate-200 text-slate-700 hover:border-slate-300 hover:bg-slate-50'
+              }`}
+            >
+              {sub.title}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="grid lg:grid-cols-12 gap-8 items-start">
+        {/* Left Sidebar: Topics List */}
+        <div className="lg:col-span-4 bg-white rounded-2xl border border-slate-200 p-4 shadow-xs space-y-2">
+          <div className="px-3 py-2 text-xs font-bold uppercase tracking-wider text-slate-400">
+            Modules & Topics ({currentSubjectTopics.length})
+          </div>
+
+          <div className="space-y-1">
+            {currentSubjectTopics.map((t) => {
+              const isSelected = selectedTopicId === t.id;
+              const hasNotes = materials.some(m => m.topicId === t.id);
+              return (
+                <button
+                  key={t.id}
+                  onClick={() => handleSelectTopic(t.id)}
+                  className={`w-full text-left p-3 rounded-xl text-xs transition-all flex items-center justify-between gap-2 cursor-pointer ${
+                    isSelected
+                      ? 'bg-indigo-50 border border-indigo-200 text-indigo-950 font-semibold'
+                      : 'hover:bg-slate-50 text-slate-700 border border-transparent'
+                  }`}
+                >
+                  <div className="min-w-0">
+                    <div className="truncate text-sm">{t.title}</div>
+                    <div className="text-[11px] text-slate-500 mt-0.5 capitalize flex items-center gap-1.5">
+                      <span>{t.difficultyLevel} Tier</span>
+                      <span aria-hidden="true">·</span>
+                      <span>~{t.estimatedMinutes} mins</span>
+                    </div>
+                  </div>
+                  {hasNotes ? (
+                    <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" title="Notes Ready" />
+                  ) : (
+                    <ChevronRight className="w-4 h-4 text-slate-300 shrink-0" />
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Right Stage: Detailed Learning Material Reader */}
+        <div className="lg:col-span-8 space-y-6">
+          {activeMaterial ? (
+            <div className="bg-white rounded-2xl border border-slate-200 p-8 shadow-xs space-y-8 animate-in fade-in duration-200">
+              {/* Header */}
+              <div className="space-y-3 pb-6 border-b border-slate-100">
+                <div className="flex flex-wrap items-center justify-between gap-4">
+                  <div className="flex items-center gap-2 text-xs text-slate-500">
+                    <Clock className="w-3.5 h-3.5" />
+                    <span>{activeMaterial.readingTimeMinutes} min reading time</span>
+                    <span aria-hidden="true">·</span>
+                    <span>Curriculum Module</span>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => onNavigateToTutor(activeMaterial.topicId)}
+                      className="px-3 py-1.5 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <MessageSquareText className="w-3.5 h-3.5 text-indigo-600" />
+                      <span>Ask AI Tutor</span>
+                    </button>
+
+                    <button
+                      onClick={() => onNavigateToPractice(activeMaterial.topicId)}
+                      className="px-4 py-1.5 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <span>Take Practice Quiz</span>
+                      <ArrowRight className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+
+                <h2 className="text-2xl font-extrabold text-slate-900 tracking-tight leading-snug">
+                  {activeMaterial.title}
+                </h2>
+                <p className="text-sm text-slate-600 leading-relaxed">
+                  {activeMaterial.summary}
+                </p>
+              </div>
+
+              {/* Main Content Markdown */}
+              <div className="prose prose-slate max-w-none text-sm text-slate-700 leading-relaxed space-y-4 whitespace-pre-wrap font-normal">
+                {activeMaterial.contentMarkdown}
+              </div>
+
+              {/* Interactive Concept Simulation Card */}
+              {activeMaterial.interactiveExample && (
+                <div className="p-6 rounded-xl bg-slate-900 text-white space-y-3">
+                  <div className="flex items-center gap-2 text-xs font-bold text-emerald-400 uppercase tracking-wider">
+                    <Code className="w-4 h-4" />
+                    <span>Interactive Concept Verification</span>
+                  </div>
+                  <h4 className="text-base font-bold text-white">
+                    {activeMaterial.interactiveExample.title}
+                  </h4>
+                  <div className="grid sm:grid-cols-2 gap-3 text-xs font-mono pt-1">
+                    <div className="p-3 bg-slate-800 rounded-lg border border-slate-700">
+                      <span className="text-slate-400 block mb-1">Input Sample:</span>
+                      <span className="text-slate-200">{activeMaterial.interactiveExample.input}</span>
+                    </div>
+                    <div className="p-3 bg-slate-800 rounded-lg border border-slate-700">
+                      <span className="text-emerald-400 block mb-1">Expected Invariant:</span>
+                      <span className="text-emerald-300 font-bold">{activeMaterial.interactiveExample.expectedOutput}</span>
+                    </div>
+                  </div>
+                  <p className="text-xs text-slate-400 leading-relaxed pt-1">
+                    {activeMaterial.interactiveExample.explanation}
+                  </p>
+                </div>
+              )}
+
+              {/* Key Takeaways */}
+              <div className="p-6 rounded-xl bg-indigo-50/50 border border-indigo-100 space-y-3">
+                <div className="text-xs font-bold text-indigo-700 uppercase tracking-wider flex items-center gap-1.5">
+                  <CheckCircle2 className="w-4 h-4" />
+                  <span>Key Conceptual Takeaways</span>
+                </div>
+                <ul className="space-y-2 text-xs text-slate-700">
+                  {activeMaterial.keyTakeaways.map((takeaway, idx) => (
+                    <li key={idx} className="flex items-start gap-2">
+                      <span className="text-indigo-600 font-bold">·</span>
+                      <span>{takeaway}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+
+              {/* Bottom Action Footer */}
+              <div className="pt-4 border-t border-slate-100 flex items-center justify-between">
+                <span className="text-xs text-slate-500">
+                  Finished studying this module?
+                </span>
+                <button
+                  onClick={() => onNavigateToPractice(activeMaterial.topicId)}
+                  className="px-6 py-2.5 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl shadow-xs transition-colors flex items-center gap-2 cursor-pointer"
+                >
+                  <span>Solve Active Recall Quiz</span>
+                  <ArrowRight className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="bg-white rounded-2xl border border-slate-200 p-12 text-center space-y-4">
+              <BookOpen className="w-10 h-10 text-slate-400 mx-auto" />
+              <h3 className="text-lg font-bold text-slate-800">
+                Notes In Preparation for {currentTopic?.title}
+              </h3>
+              <p className="text-xs text-slate-500 max-w-md mx-auto">
+                Detailed notes are being calibrated. You can ask the AI Tutor for a custom derivation or take an adaptive practice quiz right away!
+              </p>
+              <div className="flex items-center justify-center gap-3 pt-2">
+                <button
+                  onClick={() => currentTopic && onNavigateToTutor(currentTopic.id)}
+                  className="px-4 py-2 text-xs font-semibold text-slate-700 bg-slate-100 rounded-xl hover:bg-slate-200"
+                >
+                  Ask AI Tutor
+                </button>
+                <button
+                  onClick={() => currentTopic && onNavigateToPractice(currentTopic.id)}
+                  className="px-4 py-2 text-xs font-semibold text-white bg-indigo-600 rounded-xl hover:bg-indigo-700"
+                >
+                  Take Practice Quiz
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};

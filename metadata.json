@@ -1,0 +1,6 @@
+{
+  "name": "Skillora — AI Personalized Learning Assistant",
+  "description": "Adaptive AI-powered personalized learning assistant with dynamic diagnostic assessments, custom study timetables, interactive AI tutor, and topic mastery analytics.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
