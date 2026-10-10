@@ -6,12 +6,24 @@ import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI } from '@google/genai';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
+import { exec } from 'child_process';
+import { promisify } from 'util';
+import fs from 'fs';
 import { dbStore } from './server/db.ts';
 import { PersonalizationEngine } from './server/algorithms.ts';
 import {
   User, StudentProfile, AssessmentAttempt,
-  StudentPerformance, TimetableSlot, LearningHistoryItem
+  StudentPerformance, TimetableSlot, LearningHistoryItem,
+  StudyNote, LanguageCode, NoteDifficulty, Subject
 } from './src/types/index.ts';
+import {
+  generateGeminiNotes,
+  generateDeterministicNotes,
+  findVerifiedYouTubeVideos,
+  stripExtraSymbols
+} from './server/notesService.ts';
+
+const execAsync = promisify(exec);
 
 dotenv.config();
 
@@ -435,9 +447,34 @@ app.post('/api/assessment/submit', authenticate, (req: Request, res: Response) =
   );
   dbStore.setTimetable(user.id, timetable);
 
-  const { weaknesses, developing } = PersonalizationEngine.classifyStrengthsAndWeaknesses(updatedPerfs);
+  const { strengths, weaknesses, developing } = PersonalizationEngine.classifyStrengthsAndWeaknesses(updatedPerfs);
   const recs = PersonalizationEngine.generateRecommendations(weaknesses, developing, allTopics);
   dbStore.setRecommendations(user.id, recs);
+
+  const topicMap = new Map(allTopics.map(t => [t.id, t]));
+  const enrichedStrengths = strengths.map(s => ({
+    topicId: s.topicId,
+    topicTitle: topicMap.get(s.topicId)?.title || s.topicTitle || 'Concept',
+    subjectId: s.subjectId,
+    accuracyPercentage: Math.round(s.accuracyPercentage || 0),
+    masteryScore: Math.round(s.masteryScore || 0)
+  }));
+  const enrichedWeaknesses = weaknesses.map(w => ({
+    topicId: w.topicId,
+    topicTitle: topicMap.get(w.topicId)?.title || w.topicTitle || 'Concept',
+    subjectId: w.subjectId,
+    accuracyPercentage: Math.round(w.accuracyPercentage || 0),
+    masteryScore: Math.round(w.masteryScore || 0)
+  }));
+
+  const weakTopicActionIdeas = PersonalizationEngine.generateWeakTopicActionIdeas(weaknesses, allTopics, dbStore.getSubjects());
+  const quizAnalytics = PersonalizationEngine.computeQuizAnalytics(
+    evaluatedAnswers,
+    allQuestions,
+    Number(durationSeconds) || 60,
+    allTopics,
+    updatedPerfs
+  );
 
   dbStore.addHistory({
     id: `hist_${Date.now()}`,
@@ -457,7 +494,11 @@ app.post('/api/assessment/submit', authenticate, (req: Request, res: Response) =
     calculatedLevel,
     evaluatedAnswers,
     profile,
-    recommendations: recs
+    recommendations: recs,
+    strengths: enrichedStrengths,
+    weaknesses: enrichedWeaknesses,
+    weakTopicActionIdeas,
+    quizAnalytics
   });
 });
 
@@ -638,12 +679,120 @@ app.post('/api/timetable/regenerate', authenticate, (req: Request, res: Response
   return res.json(newTimetable);
 });
 
+app.post('/api/timetable/slot', authenticate, (req: Request, res: Response) => {
+  const user = (req as any).user as User;
+  const { topicTitle, dayOfWeek, date, durationMinutes, timeSlot, activityType, subjectId, topicId, notes } = req.body;
+
+  if (!topicTitle || !topicTitle.trim()) {
+    return res.status(400).json({ error: 'Task title is required' });
+  }
+
+  const newSlot: TimetableSlot = {
+    id: `slot_custom_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+    userId: user.id,
+    dayOfWeek: dayOfWeek || 'Monday',
+    date: date || undefined,
+    timeSlot: timeSlot || '10:00 - 10:45',
+    subjectId: subjectId || 'subj_cs_dsa',
+    topicId: topicId || undefined,
+    topicTitle: topicTitle.trim(),
+    durationMinutes: Number(durationMinutes) || 45,
+    activityType: activityType || 'concept_study',
+    isCompleted: false,
+    notes: notes || undefined,
+    isCustom: true
+  };
+
+  const added = dbStore.addTimetableSlot(newSlot);
+  return res.json(added);
+});
+
+app.delete('/api/timetable/slot/:slotId', authenticate, (req: Request, res: Response) => {
+  const user = (req as any).user as User;
+  const { slotId } = req.params;
+  const success = dbStore.deleteTimetableSlot(user.id, slotId);
+  return res.json({ success });
+});
+
+app.put('/api/timetable/slot/:slotId', authenticate, (req: Request, res: Response) => {
+  const user = (req as any).user as User;
+  const { slotId } = req.params;
+  const updated = dbStore.updateTimetableSlot(user.id, slotId, req.body);
+  if (!updated) {
+    return res.status(404).json({ error: 'Slot not found' });
+  }
+  return res.json(updated);
+});
+
 // -------------------------------------------------------------
-// AI Tutor & Intelligent Inference Endpoints
+// Subject Selection & Custom Subjects Endpoints
+// -------------------------------------------------------------
+
+app.get('/api/subjects', authenticate, (req: Request, res: Response) => {
+  const user = (req as any).user as User;
+  const profile = dbStore.getProfileByUserId(user.id);
+  const subjects = dbStore.getSubjects();
+  const topics = dbStore.getTopics();
+  const perfs = dbStore.getPerformances(user.id);
+
+  const selectedSet = new Set(profile?.selectedSubjects || ['subj_cs_dsa', 'subj_ml_ai']);
+  const enriched = subjects.map(s => {
+    const sTopics = topics.filter(t => t.subjectId === s.id);
+    const sPerfs = perfs.filter(p => p.subjectId === s.id);
+    const avgMastery = sPerfs.length > 0
+      ? Math.round(sPerfs.reduce((a, b) => a + b.masteryScore, 0) / sPerfs.length)
+      : 0;
+    return {
+      ...s,
+      topicsCount: sTopics.length,
+      masteryPercentage: avgMastery,
+      isSelected: selectedSet.has(s.id)
+    };
+  });
+  return res.json(enriched);
+});
+
+app.post('/api/subjects/select', authenticate, (req: Request, res: Response) => {
+  const user = (req as any).user as User;
+  const { selectedSubjects } = req.body;
+  if (!Array.isArray(selectedSubjects)) {
+    return res.status(400).json({ error: 'selectedSubjects must be an array of subject IDs' });
+  }
+  const updated = dbStore.updateUserSubjects(user.id, selectedSubjects);
+  return res.json({ success: true, selectedSubjects: updated });
+});
+
+app.post('/api/subjects/create', authenticate, (req: Request, res: Response) => {
+  const user = (req as any).user as User;
+  const { title, category, description } = req.body;
+  if (!title || !title.trim()) {
+    return res.status(400).json({ error: 'Subject title is required' });
+  }
+  const id = `subj_custom_${Date.now()}`;
+  const code = title.slice(0, 4).toUpperCase();
+  const newSubject = dbStore.addCustomSubject({
+    id,
+    code,
+    title: title.trim(),
+    category: category || 'Custom',
+    description: description || `User custom curriculum for ${title.trim()}`,
+    iconName: 'BookOpen',
+    orderIndex: dbStore.getSubjects().length + 1
+  });
+  const profile = dbStore.getProfileByUserId(user.id);
+  const current = profile?.selectedSubjects || [];
+  if (!current.includes(id)) {
+    dbStore.updateUserSubjects(user.id, [...current, id]);
+  }
+  return res.json({ success: true, subject: newSubject });
+});
+
+// -------------------------------------------------------------
+// AI Tutor & Intelligent Inference Endpoints (Multimodal)
 // -------------------------------------------------------------
 
 app.post('/api/ai/tutor', authenticate, async (req: Request, res: Response) => {
-  const { topicId, userQuery, mode, chatHistory } = req.body;
+  const { topicId, userQuery, mode, chatHistory, attachments, removeExtraSymbols = true } = req.body;
   const user = (req as any).user as User;
   const profile = dbStore.getProfileByUserId(user.id);
   const settings = dbStore.getSettings();
@@ -662,7 +811,7 @@ app.post('/api/ai/tutor', authenticate, async (req: Request, res: Response) => {
   // 1. Try Gemini 3.8 Flash via @google/genai if API key configured and provider is gemini
   if (settings.engineProvider === 'gemini' && geminiAI) {
     try {
-      const systemInstruction = `You are Skillora, an elite, patient, and pedagogical AI tutor.
+      const systemInstruction = `You are Skillora, an elite, patient, pedagogical AI tutor.
 ${studentContext}
 
 Guidelines:
@@ -670,19 +819,69 @@ Guidelines:
 - Adapt your vocabulary to the student's knowledge level (${profile?.estimatedKnowledgeLevel || 'Developing'}).
 - If mode is 'eli5', use an engaging physical analogy.
 - If mode is 'step_by_step', provide a structured numbered walkthrough with code or math.
-- End with an engaging check-for-understanding question or concrete takeaway.`;
+- If the user provides images, diagrams, or documents, carefully inspect and search them, answer specific questions about the content, and point out key elements.
+- Write clean, natural prose. Do NOT leave raw hashtags (###) or unnecessary formatting artifacts. Use clean readable paragraphs, numbered steps, or neat bullet points.`;
 
-      const contents = `${chatHistory && chatHistory.length > 0 ? `Previous context:\n${JSON.stringify(chatHistory.slice(-4))}\n\n` : ''}Student Query: ${userQuery}`;
+      const parts: any[] = [];
+
+      if (chatHistory && chatHistory.length > 0) {
+        parts.push({ text: `Previous conversation context:\n${JSON.stringify(chatHistory.slice(-4))}\n\n` });
+      }
+
+      // Add user query
+      parts.push({ text: `Student Question / Query: ${userQuery || 'Analyze the attached file'}` });
+
+      // Handle attached files and images
+      if (Array.isArray(attachments) && attachments.length > 0) {
+        for (const att of attachments) {
+          if (!att.dataUrl) continue;
+          const isImage = att.type?.startsWith('image/');
+          const isPdf = att.type === 'application/pdf';
+
+          if (isImage || isPdf) {
+            const base64Data = att.dataUrl.includes('base64,')
+              ? att.dataUrl.split('base64,')[1]
+              : att.dataUrl;
+            parts.push({
+              inlineData: {
+                mimeType: att.type || 'image/png',
+                data: base64Data
+              }
+            });
+            parts.push({ text: `\n[Attached ${isImage ? 'Image' : 'PDF Document'}: "${att.name || 'file'}"]` });
+          } else {
+            // Text/code/csv/json/markdown
+            let textContent = '';
+            if (att.dataUrl.includes('base64,')) {
+              try {
+                const rawBase64 = att.dataUrl.split('base64,')[1];
+                textContent = Buffer.from(rawBase64, 'base64').toString('utf-8');
+              } catch {
+                textContent = att.dataUrl;
+              }
+            } else {
+              textContent = att.dataUrl;
+            }
+            parts.push({
+              text: `\n[Attached File Content for "${att.name || 'document'}"]:\n${textContent.slice(0, 10000)}\n`
+            });
+          }
+        }
+      }
 
       const aiResponse = await geminiAI.models.generateContent({
         model: 'gemini-3.8-flash',
-        contents,
+        contents: parts,
         config: {
           systemInstruction,
         },
       });
 
-      const replyText = aiResponse.text || 'I apologize, but I could not generate a response at this moment.';
+      let replyText = aiResponse.text || 'I apologize, but I could not generate a response at this moment.';
+      if (removeExtraSymbols) {
+        replyText = stripExtraSymbols(replyText);
+      }
+
       return res.json({
         reply: replyText,
         engine: 'Gemini 3.8 Flash (Server-Side Inference)'
@@ -707,8 +906,9 @@ Guidelines:
 
       if (response.ok) {
         const data = await response.json() as any;
+        const reply = removeExtraSymbols ? stripExtraSymbols(data.response || '') : (data.response || '');
         return res.json({
-          reply: data.response || 'Local model responded with empty content.',
+          reply: reply || 'Local model responded with empty content.',
           engine: `Ollama (${settings.ollamaModel}) [Local On-Device]`
         });
       }
@@ -717,53 +917,163 @@ Guidelines:
     }
   }
 
-  // 3. Robust Offline Pedagogical Knowledge Engine (Works 100% offline with zero network)
-  const offlineExplanation = generateOfflineTutorReply(topicTitle, userQuery, mode || 'standard');
+  // 3. Robust Offline Pedagogical Knowledge Engine
+  const offlineExplanation = generateOfflineTutorReply(topicTitle, userQuery, mode || 'standard', attachments);
+  const cleanOffline = removeExtraSymbols ? stripExtraSymbols(offlineExplanation) : offlineExplanation;
   return res.json({
-    reply: offlineExplanation,
+    reply: cleanOffline,
     engine: 'Skillora Knowledge Engine (Deterministic Local / Offline)'
   });
 });
 
-function generateOfflineTutorReply(topic: string, query: string, mode: string): string {
-  const cleanQ = query.toLowerCase();
+function generateOfflineTutorReply(topic: string, query: string, mode: string, attachments?: any[]): string {
+  const attachmentNote = Array.isArray(attachments) && attachments.length > 0
+    ? `\n\n(Inspected ${attachments.length} attached file/image: ${attachments.map(a => a.name).join(', ')})`
+    : '';
 
   if (mode === 'eli5') {
-    return `### 💡 Simple Everyday Analogy for ${topic}
+    return `Simple Everyday Analogy for ${topic}
 
 Imagine you run a bustling library with millions of books.
 Instead of walking through every aisle one by one when someone asks for a title (which takes forever), you have a catalog system where you check the middle shelf, see if the letter comes before or after, and cut your search in half every single time!
 
-**Why it matters:**
-In ${topic}, we use clever organization so our solutions stay fast and dependable, no matter how huge the input gets.
+Why it matters:
+In ${topic}, we use clever organization so our solutions stay fast and dependable, no matter how huge the input gets.${attachmentNote}
 
-*Try asking: "Can you show me a concrete code example?" to see this in action!*`;
+Try asking: "Can you show me a concrete code example?" to see this in action!`;
   }
 
   if (mode === 'step_by_step') {
-    return `### 📋 Step-by-Step Breakdown: ${topic}
+    return `Step-by-Step Breakdown: ${topic}
 
-**1. Formulate the Invariant:**
+1. Formulate the Invariant:
 Identify what state remains true before and after each computational step.
 
-**2. Handle Base / Edge Conditions:**
+2. Handle Base / Edge Conditions:
 Always verify zero, empty array, or single-node boundaries first before recursing or iterating.
 
-**3. State Transitions & Updates:**
+3. State Transitions & Updates:
 Update your pointers or parameter weights systematically, ensuring you never overshoot the target.
 
-**4. Verification:**
-Trace with a minimal test input (e.g. $[2, 5, 8]$) and compute the exact step count to verify time & space complexity.`;
+4. Verification:
+Trace with a minimal test input and compute the exact step count to verify time & space complexity.${attachmentNote}`;
   }
 
-  return `### 🎯 Concept Analysis: ${topic}
+  return `Concept Analysis: ${topic}
 
 Regarding your question: "${query}"
 
-1. **Foundational Principle:** In ${topic}, understanding the underlying invariants and complexity trade-offs is critical. Avoid premature optimization before identifying whether the bottleneck is compute (CPU) or memory (RAM).
-2. **Pedagogical Tip:** Always write out the formula or pseudo-code before diving into implementation. This clarifies edge conditions and guarantees correctness.
-3. **Recommended Next Action:** Take an adaptive practice drill on this topic to test your recall under active retrieval!`;
+1. Foundational Principle: In ${topic}, understanding the underlying invariants and complexity trade-offs is critical. Avoid premature optimization before identifying whether the bottleneck is compute (CPU) or memory (RAM).
+2. Pedagogical Tip: Always write out the formula or pseudo-code before diving into implementation. This clarifies edge conditions and guarantees correctness.
+3. Recommended Next Action: Take an adaptive practice drill on this topic to test your recall under active retrieval!${attachmentNote}`;
 }
+
+// -------------------------------------------------------------
+// AI-Powered Notes Generation & Offline Storage Endpoints
+// -------------------------------------------------------------
+
+app.post('/api/notes/generate', async (req: Request, res: Response) => {
+  try {
+    const { topic, language = 'en', difficulty = 'Beginner', uploadedMaterial } = req.body;
+    if (!topic || typeof topic !== 'string') {
+      return res.status(400).json({ error: 'Topic is required' });
+    }
+
+    // Check optional authenticated user for personalization
+    let studentLevel = 'Competent';
+    let userId: string | undefined;
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      try {
+        const token = authHeader.split(' ')[1];
+        const decoded = jwt.verify(token, JWT_SECRET) as { userId: string };
+        const profile = dbStore.getProfileByUserId(decoded.userId);
+        if (profile) {
+          studentLevel = profile.estimatedKnowledgeLevel || 'Competent';
+          userId = decoded.userId;
+        }
+      } catch (e) {
+        // Continue unauthenticated
+      }
+    }
+
+    const settings = dbStore.getSettings();
+    let note: StudyNote;
+
+    if (settings.engineProvider === 'gemini' && geminiAI) {
+      note = await generateGeminiNotes(
+        geminiAI,
+        topic,
+        language as LanguageCode,
+        difficulty as NoteDifficulty,
+        studentLevel,
+        uploadedMaterial
+      );
+    } else {
+      note = generateDeterministicNotes(
+        topic,
+        language as LanguageCode,
+        difficulty as NoteDifficulty,
+        studentLevel
+      );
+    }
+
+    if (userId) {
+      note.userId = userId;
+    }
+
+    return res.json(note);
+  } catch (err: any) {
+    console.error('Error in /api/notes/generate:', err);
+    return res.status(500).json({ error: 'Failed to generate study notes' });
+  }
+});
+
+app.get('/api/notes/saved', (req: Request, res: Response) => {
+  let userId: string | undefined;
+  const authHeader = req.headers.authorization;
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    try {
+      const token = authHeader.split(' ')[1];
+      const decoded = jwt.verify(token, JWT_SECRET) as { userId: string };
+      userId = decoded.userId;
+    } catch (e) {}
+  }
+  const notes = dbStore.getSavedNotes(userId);
+  return res.json(notes);
+});
+
+app.post('/api/notes/save', (req: Request, res: Response) => {
+  const { note } = req.body;
+  if (!note || !note.id || !note.topic) {
+    return res.status(400).json({ error: 'Valid note object is required' });
+  }
+
+  let userId: string | undefined;
+  const authHeader = req.headers.authorization;
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    try {
+      const token = authHeader.split(' ')[1];
+      const decoded = jwt.verify(token, JWT_SECRET) as { userId: string };
+      userId = decoded.userId;
+    } catch (e) {}
+  }
+
+  const toSave: StudyNote = {
+    ...note,
+    userId: note.userId || userId,
+    isSavedOffline: true
+  };
+
+  const saved = dbStore.saveNote(toSave);
+  return res.json(saved);
+});
+
+app.delete('/api/notes/:id', (req: Request, res: Response) => {
+  const noteId = req.params.id;
+  const success = dbStore.deleteSavedNote(noteId);
+  return res.json({ success, id: noteId });
+});
 
 // -------------------------------------------------------------
 // Settings & Database Management
@@ -782,6 +1092,173 @@ app.get('/api/settings/export-db', (_req: Request, res: Response) => {
   res.setHeader('Content-Disposition', 'attachment; filename=skillora_export.json');
   res.setHeader('Content-Type', 'application/json');
   return res.json(dbStore.getState());
+});
+
+// -------------------------------------------------------------
+// GitHub Repository Sync & Export Endpoints
+// -------------------------------------------------------------
+
+app.get('/api/github/status', async (_req: Request, res: Response) => {
+  try {
+    let branch = 'main';
+    try {
+      const { stdout } = await execAsync('git branch --show-current');
+      branch = stdout.trim() || 'main';
+    } catch {
+      // fallback
+    }
+
+    let commit = {
+      hash: '',
+      author: '',
+      time: '',
+      message: ''
+    };
+
+    try {
+      const { stdout } = await execAsync('git log -1 --format="%h|%an|%ar|%s"');
+      const parts = stdout.trim().split('|');
+      if (parts.length >= 4) {
+        commit = {
+          hash: parts[0],
+          author: parts[1],
+          time: parts[2],
+          message: parts[3]
+        };
+      }
+    } catch {
+      // ignore
+    }
+
+    let remotes = '';
+    try {
+      const { stdout } = await execAsync('git remote -v');
+      remotes = stdout.trim();
+    } catch {
+      // ignore
+    }
+
+    let clean = true;
+    let pendingChanges = 0;
+    try {
+      const { stdout } = await execAsync('git status --porcelain');
+      clean = stdout.trim().length === 0;
+      pendingChanges = stdout.trim().split('\n').filter(Boolean).length;
+    } catch {
+      // ignore
+    }
+
+    let totalFiles = 0;
+    try {
+      const { stdout } = await execAsync('git ls-files');
+      totalFiles = stdout.trim().split('\n').filter(Boolean).length;
+    } catch {
+      // ignore
+    }
+
+    return res.json({
+      initialized: true,
+      branch,
+      commit,
+      remotes,
+      clean,
+      pendingChanges,
+      totalFiles
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || 'Failed to get git status' });
+  }
+});
+
+app.post('/api/github/push', async (req: Request, res: Response) => {
+  const { repoUrl, token, username, force } = req.body;
+  if (!repoUrl || typeof repoUrl !== 'string') {
+    return res.status(400).json({ error: 'Repository URL is required (e.g. https://github.com/username/skillora.git or username/skillora)' });
+  }
+
+  try {
+    // 1. Stage and commit any unstaged files first
+    try {
+      await execAsync('git add .');
+      await execAsync('git commit -m "Update Skillora learning platform components and styles"');
+    } catch {
+      // Working tree may already be clean
+    }
+
+    // 2. Parse repo url
+    let cleanUrl = repoUrl.trim();
+    if (!cleanUrl.startsWith('http://') && !cleanUrl.startsWith('https://') && !cleanUrl.startsWith('git@')) {
+      cleanUrl = `https://github.com/${cleanUrl.replace(/^\/+/, '')}`;
+    }
+    if (!cleanUrl.endsWith('.git')) {
+      cleanUrl = `${cleanUrl}.git`;
+    }
+
+    // 3. Construct authenticated URL if token provided
+    let pushUrl = cleanUrl;
+    if (token && token.trim()) {
+      const parsed = new URL(cleanUrl);
+      const authUser = username && username.trim() ? encodeURIComponent(username.trim()) : 'oauth2';
+      const authToken = encodeURIComponent(token.trim());
+      parsed.username = authUser;
+      parsed.password = authToken;
+      pushUrl = parsed.toString();
+    }
+
+    // 4. Update git remote
+    try {
+      await execAsync('git remote remove origin');
+    } catch {
+      // ignore if remote didn't exist
+    }
+
+    await execAsync(`git remote add origin "${pushUrl}"`);
+    await execAsync('git branch -M main');
+
+    // 5. Execute git push
+    const forceFlag = force ? ' --force' : '';
+    const pushCmd = `git push${forceFlag} -u origin main`;
+    
+    const { stdout, stderr } = await execAsync(pushCmd);
+    const combinedLogs = `${stdout}\n${stderr}`.trim();
+
+    // Redact any token before returning
+    const sanitizedLog = token
+      ? combinedLogs.replaceAll(token.trim(), '***TOKEN***')
+      : combinedLogs;
+
+    return res.json({
+      success: true,
+      message: 'Successfully pushed Skillora repository to GitHub!',
+      log: sanitizedLog,
+      branch: 'main'
+    });
+  } catch (err: any) {
+    let errMessage = err.stderr || err.stdout || err.message || 'Git push failed';
+    if (token) {
+      errMessage = errMessage.replaceAll(token.trim(), '***TOKEN***');
+    }
+    return res.status(400).json({
+      success: false,
+      error: errMessage,
+      log: errMessage
+    });
+  }
+});
+
+app.get('/api/github/download-archive', async (_req: Request, res: Response) => {
+  try {
+    const archivePath = '/tmp/skillora-repo.tar.gz';
+    await execAsync(`git archive --format=tar.gz --prefix=skillora/ HEAD -o "${archivePath}"`);
+    
+    res.setHeader('Content-Disposition', 'attachment; filename=skillora-repository.tar.gz');
+    res.setHeader('Content-Type', 'application/gzip');
+    
+    const stream = fs.createReadStream(archivePath);
+    stream.pipe(res);
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || 'Failed to create repository archive' });
+  }
 });
 
 // -------------------------------------------------------------

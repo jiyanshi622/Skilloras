@@ -2,7 +2,7 @@ import {
   User, StudentProfile, Subject, Topic, Question,
   AssessmentAttempt, StudentPerformance, LearningMaterial,
   TimetableSlot, Recommendation, LearningHistoryItem, AISettings,
-  DashboardData
+  DashboardData, StudyNote, LanguageCode, NoteDifficulty, ChatAttachment
 } from '../types/index.ts';
 
 const TOKEN_KEY = 'skillora_auth_token';
@@ -130,8 +130,23 @@ export class ApiClient {
   }
 
   // Curriculum & Questions
-  async getSubjects(): Promise<Subject[]> {
+  // Curriculum & Questions
+  async getSubjects(): Promise<(Subject & { isSelected?: boolean; topicsCount?: number; masteryPercentage?: number })[]> {
     return this.request('/api/subjects');
+  }
+
+  async selectSubjects(selectedSubjects: string[]): Promise<{ success: boolean; selectedSubjects: string[] }> {
+    return this.request('/api/subjects/select', {
+      method: 'POST',
+      body: JSON.stringify({ selectedSubjects }),
+    });
+  }
+
+  async createSubject(data: { title: string; category?: string; description?: string }): Promise<{ success: boolean; subject: Subject }> {
+    return this.request('/api/subjects/create', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
   }
 
   async getTopics(subjectId?: string): Promise<Topic[]> {
@@ -182,7 +197,7 @@ export class ApiClient {
     return this.request(`/api/practice/questions?${params.toString()}`);
   }
 
-  // Timetable
+  // Timetable & Personalization
   async getTimetable(): Promise<TimetableSlot[]> {
     return this.request('/api/timetable');
   }
@@ -194,18 +209,50 @@ export class ApiClient {
     });
   }
 
+  async addTimetableSlot(data: {
+    topicTitle: string;
+    dayOfWeek: string;
+    date?: string;
+    durationMinutes: number;
+    timeSlot?: string;
+    activityType?: string;
+    subjectId?: string;
+    topicId?: string;
+    notes?: string;
+  }): Promise<TimetableSlot> {
+    return this.request('/api/timetable/slot', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteTimetableSlot(slotId: string): Promise<{ success: boolean }> {
+    return this.request(`/api/timetable/slot/${encodeURIComponent(slotId)}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async updateTimetableSlot(slotId: string, updates: Partial<TimetableSlot>): Promise<TimetableSlot> {
+    return this.request(`/api/timetable/slot/${encodeURIComponent(slotId)}`, {
+      method: 'PUT',
+      body: JSON.stringify(updates),
+    });
+  }
+
   async regenerateTimetable(): Promise<TimetableSlot[]> {
     return this.request('/api/timetable/regenerate', {
       method: 'POST',
     });
   }
 
-  // AI Tutor
+  // AI Tutor (Multimodal Search & Files)
   async askAITutor(data: {
     topicId?: string;
     userQuery: string;
     mode?: 'standard' | 'eli5' | 'step_by_step' | 'real_world' | 'quiz_prep';
     chatHistory?: { role: string; content: string }[];
+    attachments?: ChatAttachment[];
+    removeExtraSymbols?: boolean;
   }): Promise<{ reply: string; engine: string }> {
     return this.request('/api/ai/tutor', {
       method: 'POST',
@@ -222,6 +269,131 @@ export class ApiClient {
     return this.request('/api/settings', {
       method: 'POST',
       body: JSON.stringify(settings),
+    });
+  }
+
+  // AI-Powered Study Notes & Offline Cache
+  async generateNotes(data: {
+    topic: string;
+    language?: LanguageCode;
+    difficulty?: NoteDifficulty;
+    uploadedMaterial?: string;
+  }): Promise<StudyNote> {
+    if (this.isOfflineMode) {
+      // If offline, check local saved notes first
+      const local = this.getLocalSavedNotes();
+      const existing = local.find(n => n.topic.toLowerCase() === data.topic.toLowerCase() && n.language === (data.language || 'en'));
+      if (existing) {
+        return existing;
+      }
+    }
+
+    try {
+      const res = await this.request<StudyNote>('/api/notes/generate', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      });
+      return res;
+    } catch (err) {
+      // Offline fallback: check local storage
+      const local = this.getLocalSavedNotes();
+      const match = local.find(n => n.topic.toLowerCase().includes(data.topic.toLowerCase()));
+      if (match) return match;
+      throw err;
+    }
+  }
+
+  async getSavedNotes(): Promise<StudyNote[]> {
+    try {
+      if (!this.isOfflineMode) {
+        const remoteNotes = await this.request<StudyNote[]>('/api/notes/saved');
+        // Synchronize to localStorage for offline readiness
+        this.setLocalSavedNotes(remoteNotes);
+        return remoteNotes;
+      }
+    } catch (e) {
+      console.warn('Failed to load remote saved notes, using local storage cache');
+    }
+    return this.getLocalSavedNotes();
+  }
+
+  async saveNote(note: StudyNote): Promise<StudyNote> {
+    // 1. Update local storage immediately for offline reliability
+    const local = this.getLocalSavedNotes();
+    const idx = local.findIndex(n => n.id === note.id);
+    const updatedNote = { ...note, isSavedOffline: true };
+    if (idx >= 0) {
+      local[idx] = updatedNote;
+    } else {
+      local.unshift(updatedNote);
+    }
+    this.setLocalSavedNotes(local);
+
+    // 2. Sync to server if online
+    if (!this.isOfflineMode) {
+      try {
+        return await this.request<StudyNote>('/api/notes/save', {
+          method: 'POST',
+          body: JSON.stringify({ note: updatedNote }),
+        });
+      } catch (e) {
+        console.warn('Note saved locally (offline), will sync later');
+      }
+    }
+    return updatedNote;
+  }
+
+  async deleteSavedNote(noteId: string): Promise<boolean> {
+    const local = this.getLocalSavedNotes().filter(n => n.id !== noteId);
+    this.setLocalSavedNotes(local);
+
+    if (!this.isOfflineMode) {
+      try {
+        await this.request<{ success: boolean }>(`/api/notes/${noteId}`, {
+          method: 'DELETE',
+        });
+      } catch (e) {}
+    }
+    return true;
+  }
+
+  public getLocalSavedNotes(): StudyNote[] {
+    try {
+      const raw = localStorage.getItem('skillora_saved_notes');
+      return raw ? JSON.parse(raw) : [];
+    } catch (e) {
+      return [];
+    }
+  }
+
+  public setLocalSavedNotes(notes: StudyNote[]) {
+    try {
+      localStorage.setItem('skillora_saved_notes', JSON.stringify(notes));
+    } catch (e) {}
+  }
+
+  // GitHub Version Control & Sync
+  async getGitStatus(): Promise<{
+    initialized: boolean;
+    branch: string;
+    commit: { hash: string; author: string; time: string; message: string };
+    remotes: string;
+    clean: boolean;
+    pendingChanges: number;
+    totalFiles: number;
+  }> {
+    return this.request('/api/github/status');
+  }
+
+  async pushToGitHub(data: {
+    repoUrl: string;
+    token?: string;
+    username?: string;
+    force?: boolean;
+  }): Promise<{ success: boolean; message?: string; log?: string; error?: string }> {
+    return this.request('/api/github/push', {
+      method: 'POST',
+      body: JSON.stringify(data),
     });
   }
 }

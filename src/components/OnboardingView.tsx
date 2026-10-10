@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import {
-  Compass, Check, ArrowRight, ArrowLeft, Clock,
-  Sparkles, BookOpen, Brain, Calculator, Globe, Atom
+  Compass, Check, ArrowRight, ArrowLeft,
+  Sparkles, Brain, Calculator, Globe, Atom
 } from 'lucide-react';
 import { api } from '../lib/api.ts';
 import { User, StudentProfile, ExperienceLevel } from '../types/index.ts';
@@ -31,9 +31,25 @@ export const OnboardingView: React.FC<OnboardingViewProps> = ({ user, onComplete
   const [fullName, setFullName] = useState(user.fullName || '');
   const [selectedGoals, setSelectedGoals] = useState<string[]>([GOALS[0].title]);
   const [selectedSubjects, setSelectedSubjects] = useState<string[]>(['subj_cs_dsa', 'subj_ml_ai']);
+  const [subjectList, setSubjectList] = useState(SUBJECTS);
+  const [customSubjectInput, setCustomSubjectInput] = useState('');
   const [experienceLevel, setExperienceLevel] = useState<ExperienceLevel>('beginner');
   const [preferredDailyHours, setPreferredDailyHours] = useState<number>(1.5);
   const [loading, setLoading] = useState(false);
+
+  const handleAddCustomSubject = () => {
+    if (!customSubjectInput.trim()) return;
+    const customId = `subj_custom_${Date.now()}`;
+    const newSub = {
+      id: customId,
+      title: customSubjectInput.trim(),
+      icon: Sparkles,
+      category: 'Custom'
+    };
+    setSubjectList(prev => [...prev, newSub]);
+    setSelectedSubjects(prev => [...prev, customId]);
+    setCustomSubjectInput('');
+  };
 
   const toggleGoal = (title: string) => {
     if (selectedGoals.includes(title)) {
@@ -77,14 +93,14 @@ export const OnboardingView: React.FC<OnboardingViewProps> = ({ user, onComplete
     <div className="max-w-3xl mx-auto px-4 py-12">
       {/* Stepper Header */}
       <div className="mb-10 text-center space-y-2">
-        <div className="inline-flex items-center gap-2 text-xs font-semibold text-indigo-700 bg-indigo-50 border border-indigo-100 px-3 py-1 rounded-md">
+        <div className="inline-flex items-center gap-2 text-xs font-bold text-[#4D5A46] bg-[#E9E4D6] px-3.5 py-1.5 rounded-full">
           <Compass className="w-3.5 h-3.5" />
           <span>Step {step} of 3 · Student Profile Setup</span>
         </div>
-        <h1 className="text-3xl font-extrabold text-slate-900 tracking-tight">
+        <h1 className="text-3xl font-extrabold text-[#2C241D] tracking-tight">
           Tailor Skillora to your ambitions
         </h1>
-        <p className="text-slate-600 text-sm max-w-lg mx-auto">
+        <p className="text-[#6B6256] text-sm max-w-lg mx-auto font-medium">
           We configure the pedagogical algorithm and daily schedule around your personal targets.
         </p>
 
@@ -95,21 +111,21 @@ export const OnboardingView: React.FC<OnboardingViewProps> = ({ user, onComplete
               key={num}
               className={`h-1.5 rounded-full transition-all duration-300 ${
                 num === step
-                  ? 'w-10 bg-indigo-600'
+                  ? 'w-10 bg-[#55634E]'
                   : num < step
-                  ? 'w-6 bg-emerald-500'
-                  : 'w-6 bg-slate-200'
+                  ? 'w-6 bg-[#86957E]'
+                  : 'w-6 bg-[#E0D9CB]'
               }`}
             />
           ))}
         </div>
       </div>
 
-      <div className="bg-white rounded-2xl border border-slate-200 p-8 shadow-xs">
+      <div className="bg-white rounded-3xl border border-[#E8E2D5] p-8 shadow-xs">
         {step === 1 && (
           <div className="space-y-6 animate-in fade-in duration-200">
             <div>
-              <label className="block text-sm font-semibold text-slate-900 mb-1">
+              <label className="block text-xs font-bold uppercase tracking-wider text-[#2C241D] mb-1.5">
                 Your Preferred Name
               </label>
               <input
@@ -117,15 +133,15 @@ export const OnboardingView: React.FC<OnboardingViewProps> = ({ user, onComplete
                 value={fullName}
                 onChange={(e) => setFullName(e.target.value)}
                 placeholder="Enter your name"
-                className="w-full px-4 py-2.5 text-sm rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                className="w-full px-4 py-3 text-sm rounded-2xl border border-[#D5CFBF] bg-[#FAF8F5] focus:outline-none focus:ring-2 focus:ring-[#55634E]"
               />
             </div>
 
             <div>
-              <label className="block text-sm font-semibold text-slate-900 mb-1">
+              <label className="block text-xs font-bold uppercase tracking-wider text-[#2C241D] mb-1.5">
                 What are your primary learning goals?
               </label>
-              <p className="text-xs text-slate-500 mb-3">
+              <p className="text-xs text-[#7A7165] mb-3">
                 Select at least one goal to guide our recommendation weighting.
               </p>
               <div className="grid sm:grid-cols-2 gap-3">
@@ -135,21 +151,21 @@ export const OnboardingView: React.FC<OnboardingViewProps> = ({ user, onComplete
                     <div
                       key={g.id}
                       onClick={() => toggleGoal(g.title)}
-                      className={`p-4 rounded-xl border cursor-pointer transition-all ${
+                      className={`p-4 rounded-2xl border cursor-pointer transition-all ${
                         selected
-                          ? 'border-indigo-600 bg-indigo-50/50 text-indigo-950 shadow-xs'
-                          : 'border-slate-200 hover:border-slate-300 bg-white'
+                          ? 'border-[#55634E] bg-[#EBE5D8]/50 shadow-xs'
+                          : 'border-[#E8E2D5] hover:border-[#D5CFBF] bg-white'
                       }`}
                     >
                       <div className="flex items-start justify-between gap-2">
-                        <div className="text-sm font-semibold text-slate-900">{g.title}</div>
-                        <div className={`w-4 h-4 rounded-full flex items-center justify-center shrink-0 border ${
-                          selected ? 'bg-indigo-600 border-indigo-600 text-white' : 'border-slate-300'
+                        <div className="text-sm font-bold text-[#2C241D]">{g.title}</div>
+                        <div className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 border ${
+                          selected ? 'bg-[#55634E] border-[#55634E] text-white' : 'border-[#C8C1B4]'
                         }`}>
-                          {selected && <Check className="w-3 h-3" />}
+                          {selected && <Check className="w-3 h-3 stroke-[3]" />}
                         </div>
                       </div>
-                      <p className="text-xs text-slate-500 mt-1">{g.desc}</p>
+                      <p className="text-xs text-[#6B6256] mt-1">{g.desc}</p>
                     </div>
                   );
                 })}
@@ -161,43 +177,62 @@ export const OnboardingView: React.FC<OnboardingViewProps> = ({ user, onComplete
         {step === 2 && (
           <div className="space-y-6 animate-in fade-in duration-200">
             <div>
-              <label className="block text-sm font-semibold text-slate-900 mb-1">
+              <label className="block text-xs font-bold uppercase tracking-wider text-[#2C241D] mb-1.5">
                 Select Your Study Subjects
               </label>
-              <p className="text-xs text-slate-500 mb-4">
+              <p className="text-xs text-[#7A7165] mb-4">
                 Choose the domains you wish to focus on for your curriculum and diagnostic test.
               </p>
               <div className="grid sm:grid-cols-2 gap-3">
-                {SUBJECTS.map((sub) => {
-                  const Icon = sub.icon;
+                {subjectList.map((sub) => {
+                  const Icon = sub.icon || Sparkles;
                   const selected = selectedSubjects.includes(sub.id);
                   return (
                     <div
                       key={sub.id}
                       onClick={() => toggleSubject(sub.id)}
-                      className={`p-4 rounded-xl border cursor-pointer transition-all flex items-center gap-3.5 ${
+                      className={`p-4 rounded-2xl border cursor-pointer transition-all flex items-center gap-3.5 ${
                         selected
-                          ? 'border-indigo-600 bg-indigo-50/50 shadow-xs'
-                          : 'border-slate-200 hover:border-slate-300 bg-white'
+                          ? 'border-[#55634E] bg-[#EBE5D8]/50 shadow-xs'
+                          : 'border-[#E8E2D5] hover:border-[#D5CFBF] bg-white'
                       }`}
                     >
-                      <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 ${
-                        selected ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-600'
+                      <div className={`w-10 h-10 rounded-2xl flex items-center justify-center shrink-0 ${
+                        selected ? 'bg-[#55634E] text-white' : 'bg-[#EBE5D8] text-[#554A3B]'
                       }`}>
                         <Icon className="w-5 h-5" />
                       </div>
                       <div className="flex-1 min-w-0">
-                        <div className="text-sm font-semibold text-slate-900 truncate">{sub.title}</div>
-                        <div className="text-xs text-slate-500">{sub.category} Curriculum</div>
+                        <div className="text-sm font-bold text-[#2C241D] truncate">{sub.title}</div>
+                        <div className="text-xs text-[#7A7165]">{sub.category} Curriculum</div>
                       </div>
-                      <div className={`w-4 h-4 rounded-full flex items-center justify-center shrink-0 border ${
-                        selected ? 'bg-indigo-600 border-indigo-600 text-white' : 'border-slate-300'
+                      <div className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 border ${
+                        selected ? 'bg-[#55634E] border-[#55634E] text-white' : 'border-[#C8C1B4]'
                       }`}>
-                        {selected && <Check className="w-3 h-3" />}
+                        {selected && <Check className="w-3 h-3 stroke-[3]" />}
                       </div>
                     </div>
                   );
                 })}
+              </div>
+
+              {/* Add Custom Subject */}
+              <div className="pt-3 border-t border-[#F0EBE0] flex items-center gap-2">
+                <input
+                  type="text"
+                  placeholder="Or enter any custom subject (e.g. Organic Chemistry, Quantum Physics)..."
+                  value={customSubjectInput}
+                  onChange={(e) => setCustomSubjectInput(e.target.value)}
+                  className="flex-1 px-3.5 py-2 text-xs rounded-xl border border-[#D5CFBF] bg-[#FAF8F5] focus:outline-none focus:ring-2 focus:ring-[#55634E]"
+                />
+                <button
+                  type="button"
+                  onClick={handleAddCustomSubject}
+                  disabled={!customSubjectInput.trim()}
+                  className="px-4 py-2 text-xs font-bold text-white bg-[#55634E] hover:bg-[#47533F] rounded-xl cursor-pointer disabled:opacity-50"
+                >
+                  + Add Subject
+                </button>
               </div>
             </div>
           </div>
@@ -206,7 +241,7 @@ export const OnboardingView: React.FC<OnboardingViewProps> = ({ user, onComplete
         {step === 3 && (
           <div className="space-y-6 animate-in fade-in duration-200">
             <div>
-              <label className="block text-sm font-semibold text-slate-900 mb-1">
+              <label className="block text-xs font-bold uppercase tracking-wider text-[#2C241D] mb-2">
                 Current Experience Level
               </label>
               <div className="grid grid-cols-3 gap-3">
@@ -215,10 +250,10 @@ export const OnboardingView: React.FC<OnboardingViewProps> = ({ user, onComplete
                     key={lvl}
                     type="button"
                     onClick={() => setExperienceLevel(lvl)}
-                    className={`py-3 px-4 rounded-xl border text-sm font-semibold capitalize transition-all cursor-pointer ${
+                    className={`py-3 px-4 rounded-2xl border text-xs font-bold capitalize transition-all cursor-pointer ${
                       experienceLevel === lvl
-                        ? 'border-indigo-600 bg-indigo-50 text-indigo-700 shadow-xs'
-                        : 'border-slate-200 hover:border-slate-300 text-slate-700'
+                        ? 'border-[#55634E] bg-[#55634E] text-white shadow-xs'
+                        : 'border-[#E8E2D5] hover:border-[#D5CFBF] text-[#2C241D] bg-white'
                     }`}
                   >
                     {lvl}
@@ -229,14 +264,14 @@ export const OnboardingView: React.FC<OnboardingViewProps> = ({ user, onComplete
 
             <div>
               <div className="flex items-center justify-between mb-2">
-                <label className="block text-sm font-semibold text-slate-900">
+                <label className="block text-xs font-bold uppercase tracking-wider text-[#2C241D]">
                   Target Daily Study Time
                 </label>
-                <span className="text-sm font-bold text-indigo-600 font-mono tabular-nums">
+                <span className="text-sm font-bold text-[#55634E] font-mono tabular-nums">
                   {preferredDailyHours} hours / day
                 </span>
               </div>
-              <p className="text-xs text-slate-500 mb-4">
+              <p className="text-xs text-[#7A7165] mb-4">
                 Skillora splits this into dedicated 45-minute focus intervals and revision blocks.
               </p>
               <div className="grid grid-cols-4 gap-2">
@@ -245,10 +280,10 @@ export const OnboardingView: React.FC<OnboardingViewProps> = ({ user, onComplete
                     key={hours}
                     type="button"
                     onClick={() => setPreferredDailyHours(hours)}
-                    className={`py-2.5 px-3 rounded-lg border text-xs font-semibold transition-all cursor-pointer ${
+                    className={`py-2.5 px-3 rounded-xl border text-xs font-bold transition-all cursor-pointer ${
                       preferredDailyHours === hours
-                        ? 'border-indigo-600 bg-indigo-600 text-white'
-                        : 'border-slate-200 hover:border-slate-300 text-slate-700'
+                        ? 'border-[#55634E] bg-[#55634E] text-white'
+                        : 'border-[#E8E2D5] hover:border-[#D5CFBF] text-[#2C241D] bg-white'
                     }`}
                   >
                     {hours} hrs
@@ -257,22 +292,22 @@ export const OnboardingView: React.FC<OnboardingViewProps> = ({ user, onComplete
               </div>
             </div>
 
-            <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-600 space-y-1">
-              <div className="font-semibold text-slate-900">Next Step: Initial Diagnostic Assessment</div>
+            <div className="p-4 rounded-2xl bg-[#F6F3EC] border border-[#E8E2D5] text-xs text-[#6B6256] space-y-1">
+              <div className="font-bold text-[#2C241D]">Next Step: Diagnostic Assessment</div>
               <p>
-                You will solve 10 targeted questions to calibrate your Bayesian knowledge baseline. Don't worry if questions get difficult—the engine adapts as you go!
+                You will solve targeted multi-difficulty questions to calibrate your Bayesian knowledge baseline.
               </p>
             </div>
           </div>
         )}
 
         {/* Footer controls */}
-        <div className="flex items-center justify-between pt-8 border-t border-slate-100 mt-8">
+        <div className="flex items-center justify-between pt-8 border-t border-[#F0EBE0] mt-8">
           {step > 1 ? (
             <button
               type="button"
               onClick={() => setStep(step - 1)}
-              className="px-4 py-2 text-sm font-semibold text-slate-600 hover:text-slate-900 flex items-center gap-1 cursor-pointer"
+              className="px-4 py-2 text-xs font-bold text-[#6B6256] hover:text-[#2C241D] flex items-center gap-1 cursor-pointer"
             >
               <ArrowLeft className="w-4 h-4" />
               <span>Back</span>
@@ -285,7 +320,7 @@ export const OnboardingView: React.FC<OnboardingViewProps> = ({ user, onComplete
             <button
               type="button"
               onClick={() => setStep(step + 1)}
-              className="px-6 py-2.5 text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl shadow-xs flex items-center gap-1.5 transition-colors cursor-pointer"
+              className="px-6 py-2.5 text-xs font-bold text-white bg-[#55634E] hover:bg-[#47533F] rounded-full shadow-xs flex items-center gap-1.5 transition-colors cursor-pointer"
             >
               <span>Continue</span>
               <ArrowRight className="w-4 h-4" />
@@ -295,7 +330,7 @@ export const OnboardingView: React.FC<OnboardingViewProps> = ({ user, onComplete
               type="button"
               disabled={loading}
               onClick={handleFinish}
-              className="px-6 py-2.5 text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl shadow-xs flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50"
+              className="px-6 py-2.5 text-xs font-bold text-white bg-[#55634E] hover:bg-[#47533F] rounded-full shadow-xs flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50"
             >
               <span>{loading ? 'Initializing...' : 'Start Diagnostic Assessment'}</span>
               <ArrowRight className="w-4 h-4" />

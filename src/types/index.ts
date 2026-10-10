@@ -125,14 +125,17 @@ export interface TimetableSlot {
   id: string;
   userId: string;
   dayOfWeek: 'Monday' | 'Tuesday' | 'Wednesday' | 'Thursday' | 'Friday' | 'Saturday' | 'Sunday';
+  date?: string; // e.g. '2025-05-12'
   timeSlot: string;
   subjectId: string;
   subjectTitle?: string;
-  topicId: string;
-  topicTitle?: string;
+  topicId?: string;
+  topicTitle: string;
   durationMinutes: number;
   activityType: ActivityType;
   isCompleted: boolean;
+  notes?: string;
+  isCustom?: boolean;
 }
 
 export interface Recommendation {
@@ -155,17 +158,70 @@ export interface LearningHistoryItem {
   createdAt: string;
 }
 
+export interface ChatAttachment {
+  name: string;
+  type: string;
+  dataUrl: string;
+  size?: number;
+}
+
 export interface ChatMessage {
   id: string;
   sender: 'user' | 'assistant';
   text: string;
   timestamp: string;
   engineUsed?: string;
+  attachments?: ChatAttachment[];
   quickPrompts?: string[];
   suggestedAction?: {
     type: 'practice' | 'read' | 'quiz';
     topicId: string;
     title: string;
+  };
+}
+
+export interface WeakTopicActionIdea {
+  topicId: string;
+  topicTitle: string;
+  subjectTitle?: string;
+  accuracyPercentage: number;
+  masteryScore: number;
+  urgencyLevel: 'critical' | 'high' | 'medium';
+  shortReason: string;
+  ideas: {
+    title: string;
+    description: string;
+    actionType: 'notes' | 'quiz' | 'drill' | 'timetable' | 'video';
+    targetTopicId?: string;
+    targetTopicTitle?: string;
+  }[];
+}
+
+export interface QuizResultAnalytics {
+  attemptId: string;
+  scorePercentage: number;
+  correctCount: number;
+  totalQuestions: number;
+  durationSeconds: number;
+  calculatedLevel: KnowledgeLevel;
+  averageSecondsPerQuestion: number;
+  strengths: {
+    topicId: string;
+    topicTitle: string;
+    accuracyPercentage: number;
+    masteryScore: number;
+  }[];
+  weaknesses: {
+    topicId: string;
+    topicTitle: string;
+    accuracyPercentage: number;
+    masteryScore: number;
+  }[];
+  actionIdeas: WeakTopicActionIdea[];
+  difficultyBreakdown: {
+    easy: { correct: number; total: number };
+    medium: { correct: number; total: number };
+    hard: { correct: number; total: number };
   };
 }
 
@@ -187,3 +243,66 @@ export interface DashboardData {
   recentAttempts: AssessmentAttempt[];
   materials: LearningMaterial[];
 }
+
+export type LanguageCode = 'en' | 'hi' | 'gu';
+export type NoteDifficulty = 'Beginner' | 'Intermediate' | 'Expert';
+
+export interface YouTubeRecommendation {
+  id: string;
+  title: string;
+  channelTitle: string;
+  thumbnailUrl: string;
+  youtubeUrl: string;
+  duration?: string;
+  difficulty: NoteDifficulty;
+  language: LanguageCode;
+}
+
+export interface NextTopicSuggestion {
+  id: string;
+  topicTitle: string;
+  description: string;
+  difficulty: NoteDifficulty;
+  order: number;
+  reason: string;
+  isCompleted?: boolean;
+}
+
+export interface StudyNoteSection {
+  heading: string;
+  bulletPoints: string[];
+  explanation?: string;
+}
+
+export interface StudyNoteExample {
+  title: string;
+  description: string;
+  codeOrFormula?: string;
+}
+
+export interface StudyNoteQuizQuestion {
+  question: string;
+  options: string[];
+  correctIndex: number;
+  explanation: string;
+}
+
+export interface StudyNote {
+  id: string;
+  userId?: string;
+  topic: string;
+  language: LanguageCode;
+  languageLabel: string;
+  difficulty: NoteDifficulty;
+  summary: string;
+  sections: StudyNoteSection[];
+  keyPoints: string[];
+  examples: StudyNoteExample[];
+  practiceQuestions: StudyNoteQuizQuestion[];
+  youtubeVideos: YouTubeRecommendation[];
+  nextTopics: NextTopicSuggestion[];
+  createdAt: string;
+  isSavedOffline?: boolean;
+  engineUsed?: string;
+}
+

@@ -3,7 +3,8 @@ import path from 'path';
 import {
   User, StudentProfile, Subject, Topic, Question,
   AssessmentAttempt, StudentPerformance, LearningMaterial,
-  TimetableSlot, Recommendation, LearningHistoryItem, AISettings
+  TimetableSlot, Recommendation, LearningHistoryItem, AISettings,
+  StudyNote
 } from '../src/types/index.ts';
 
 const DB_FILE = path.join(process.cwd(), 'data', 'skillora_store.json');
@@ -21,6 +22,7 @@ export interface DatabaseState {
   recommendations: Recommendation[];
   history: LearningHistoryItem[];
   settings: AISettings;
+  savedNotes: StudyNote[];
 }
 
 const INITIAL_SUBJECTS: Subject[] = [
@@ -450,7 +452,9 @@ export class DatabaseStore {
     try {
       if (fs.existsSync(DB_FILE)) {
         const raw = fs.readFileSync(DB_FILE, 'utf-8');
-        return JSON.parse(raw);
+        const parsed = JSON.parse(raw);
+        if (!parsed.savedNotes) parsed.savedNotes = [];
+        return parsed;
       }
     } catch (e) {
       console.warn('Could not read existing db file, creating clean initial store');
@@ -468,6 +472,7 @@ export class DatabaseStore {
       timetables: [],
       recommendations: [],
       history: [],
+      savedNotes: [],
       settings: {
         engineProvider: 'gemini',
         ollamaEndpoint: 'http://localhost:11434',
@@ -592,6 +597,50 @@ export class DatabaseStore {
     return false;
   }
 
+  public addTimetableSlot(slot: TimetableSlot): TimetableSlot {
+    this.state.timetables.unshift(slot);
+    this.save();
+    return slot;
+  }
+
+  public deleteTimetableSlot(userId: string, slotId: string): boolean {
+    const prevLen = this.state.timetables.length;
+    this.state.timetables = this.state.timetables.filter(t => !(t.userId === userId && t.id === slotId));
+    if (this.state.timetables.length !== prevLen) {
+      this.save();
+      return true;
+    }
+    return false;
+  }
+
+  public updateTimetableSlot(userId: string, slotId: string, updates: Partial<TimetableSlot>): TimetableSlot | null {
+    const slot = this.state.timetables.find(t => t.userId === userId && t.id === slotId);
+    if (slot) {
+      Object.assign(slot, updates);
+      this.save();
+      return slot;
+    }
+    return null;
+  }
+
+  public addCustomSubject(subject: Subject): Subject {
+    const exists = this.state.subjects.find(s => s.id === subject.id || s.title.toLowerCase() === subject.title.toLowerCase());
+    if (exists) return exists;
+    this.state.subjects.push(subject);
+    this.save();
+    return subject;
+  }
+
+  public updateUserSubjects(userId: string, subjectIds: string[]): string[] {
+    const profile = this.getProfileByUserId(userId);
+    if (profile) {
+      profile.selectedSubjects = subjectIds;
+      profile.updatedAt = new Date().toISOString();
+      this.save();
+    }
+    return subjectIds;
+  }
+
   // --- Recommendations ---
   public getRecommendations(userId: string): Recommendation[] {
     return this.state.recommendations.filter(r => r.userId === userId);
@@ -630,6 +679,38 @@ export class DatabaseStore {
     this.state.settings = { ...this.state.settings, ...settings };
     this.save();
     return this.state.settings;
+  }
+
+  // --- Saved Notes ---
+  public getSavedNotes(userId?: string): StudyNote[] {
+    if (!this.state.savedNotes) this.state.savedNotes = [];
+    if (userId) {
+      return this.state.savedNotes.filter(n => !n.userId || n.userId === userId);
+    }
+    return this.state.savedNotes;
+  }
+
+  public saveNote(note: StudyNote): StudyNote {
+    if (!this.state.savedNotes) this.state.savedNotes = [];
+    const idx = this.state.savedNotes.findIndex(n => n.id === note.id);
+    if (idx >= 0) {
+      this.state.savedNotes[idx] = note;
+    } else {
+      this.state.savedNotes.unshift(note);
+    }
+    this.save();
+    return note;
+  }
+
+  public deleteSavedNote(noteId: string): boolean {
+    if (!this.state.savedNotes) this.state.savedNotes = [];
+    const prevLen = this.state.savedNotes.length;
+    this.state.savedNotes = this.state.savedNotes.filter(n => n.id !== noteId);
+    if (this.state.savedNotes.length !== prevLen) {
+      this.save();
+      return true;
+    }
+    return false;
   }
 }
 

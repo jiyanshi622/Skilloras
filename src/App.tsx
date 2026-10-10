@@ -13,6 +13,8 @@ import { PracticeQuizView } from './components/PracticeQuizView.tsx';
 import { AnalyticsView } from './components/AnalyticsView.tsx';
 import { TimetableView } from './components/TimetableView.tsx';
 import { SettingsView } from './components/SettingsView.tsx';
+import { NotesGeneratorView } from './components/NotesGeneratorView.tsx';
+import { GitHubModal } from './components/GitHubModal.tsx';
 import { WifiOff } from 'lucide-react';
 
 export default function App() {
@@ -21,6 +23,7 @@ export default function App() {
   const [currentView, setCurrentView] = useState<string>('landing');
   const [viewParams, setViewParams] = useState<any>({});
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+  const [isGitHubModalOpen, setIsGitHubModalOpen] = useState(false);
   const [isOffline, setIsOffline] = useState(false);
   const [initializing, setInitializing] = useState(true);
 
@@ -85,10 +88,10 @@ export default function App() {
 
   if (initializing) {
     return (
-      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+      <div className="min-h-screen bg-[#F5F2EA] flex items-center justify-center">
         <div className="text-center space-y-3">
-          <div className="w-8 h-8 border-3 border-indigo-600 border-t-transparent rounded-full animate-spin mx-auto" />
-          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
+          <div className="w-8 h-8 border-3 border-[#55634E] border-t-transparent rounded-full animate-spin mx-auto" />
+          <p className="text-xs font-bold text-[#7A7165] uppercase tracking-wider">
             Initializing Skillora Engine...
           </p>
         </div>
@@ -97,11 +100,11 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col text-slate-900">
+    <div className="min-h-screen bg-[#F5F2EA] flex flex-col text-[#2C241D]">
       {/* Offline Alert Strip */}
       {isOffline && (
-        <div className="bg-amber-500 text-slate-950 px-4 py-2 text-xs font-semibold text-center flex items-center justify-center gap-2">
-          <WifiOff className="w-3.5 h-3.5" />
+        <div className="bg-[#EBE3D0] text-[#634E28] border-b border-[#DCD3BE] px-4 py-2 text-xs font-semibold text-center flex items-center justify-center gap-2">
+          <WifiOff className="w-3.5 h-3.5 text-amber-700" />
           <span>Offline Simulation Mode Active: Using on-device storage and local deterministic knowledge engine.</span>
         </div>
       )}
@@ -116,6 +119,7 @@ export default function App() {
         onLogout={handleLogout}
         isOffline={isOffline}
         onToggleOffline={toggleOfflineSimulation}
+        onOpenGitHubModal={() => setIsGitHubModalOpen(true)}
       />
 
       {/* Primary View Router */}
@@ -152,8 +156,10 @@ export default function App() {
 
         {currentView === 'assessment' && (
           <AssessmentView
-            assessmentType="initial_diagnostic"
+            assessmentType={viewParams.assessmentType || "initial_diagnostic"}
+            subjectId={viewParams.subjectId}
             onComplete={() => handleNavigate('dashboard')}
+            onNavigate={handleNavigate}
           />
         )}
 
@@ -161,6 +167,19 @@ export default function App() {
           <DashboardView
             user={user}
             onNavigate={handleNavigate}
+          />
+        )}
+
+        {currentView === 'notes' && (
+          <NotesGeneratorView
+            initialTopic={viewParams.topicTitle || viewParams.topicId}
+            initialLanguage={viewParams.language}
+            initialDifficulty={viewParams.difficulty}
+            user={user}
+            profile={profile}
+            isOffline={isOffline}
+            onNavigateToPractice={(tId) => handleNavigate('practice', { topicId: tId })}
+            onNavigateToTutor={(tId) => handleNavigate('tutor', { topicId: tId })}
           />
         )}
 
@@ -185,6 +204,7 @@ export default function App() {
             initialTopicId={viewParams.topicId}
             onNavigateToTutor={(tId) => handleNavigate('tutor', { topicId: tId })}
             onNavigateToDashboard={() => handleNavigate('dashboard')}
+            onNavigateToNotes={(tTitle) => handleNavigate('notes', { topicTitle: tTitle })}
           />
         )}
 
@@ -203,6 +223,7 @@ export default function App() {
             user={user}
             profile={profile}
             onProfileUpdated={(p) => setProfile(p)}
+            onOpenGitHubModal={() => setIsGitHubModalOpen(true)}
           />
         )}
       </main>
@@ -212,6 +233,12 @@ export default function App() {
         isOpen={isAuthModalOpen}
         onClose={() => setIsAuthModalOpen(false)}
         onAuthSuccess={handleAuthSuccess}
+      />
+
+      {/* GitHub Sync & Export Modal */}
+      <GitHubModal
+        isOpen={isGitHubModalOpen}
+        onClose={() => setIsGitHubModalOpen(false)}
       />
     </div>
   );

@@ -182,4 +182,123 @@ export class PersonalizationEngine {
 
     return recommendations;
   }
+
+  static generateWeakTopicActionIdeas(
+    weaknesses: any[],
+    topics: any[],
+    subjects?: any[]
+  ): any[] {
+    const topicMap = new Map(topics.map(t => [t.id, t]));
+    const subjectMap = new Map((subjects || []).map((s: any) => [s.id, s.title]));
+
+    return weaknesses.map((w) => {
+      const topic = topicMap.get(w.topicId);
+      const title = topic?.title || w.topicTitle || 'Key Concept';
+      const subjectTitle = subjectMap.get(topic?.subjectId || w.subjectId) || 'Foundational Subject';
+      const acc = Math.round(w.accuracyPercentage || 0);
+      const urgency: 'critical' | 'high' | 'medium' = acc < 35 ? 'critical' : acc < 55 ? 'high' : 'medium';
+
+      return {
+        topicId: w.topicId,
+        topicTitle: title,
+        subjectTitle,
+        accuracyPercentage: acc,
+        masteryScore: Math.round(w.masteryScore || 0),
+        urgencyLevel: urgency,
+        shortReason: acc < 35
+          ? `High vulnerability detected (${acc}% accuracy). Fundamental concepts require step-by-step rebuild.`
+          : `Retention gap identified (${acc}% accuracy). Targeted revision and deliberate drill recommended.`,
+        ideas: [
+          {
+            title: `Generate AI Study Notes for ${title}`,
+            description: `Review beginner-friendly definitions, visual step-by-step traces, and core invariants in English, Hindi, or Gujarati.`,
+            actionType: 'notes',
+            targetTopicId: w.topicId,
+            targetTopicTitle: title
+          },
+          {
+            title: `Solve a 5-Question Drill on ${title}`,
+            description: `Practice adaptive questions targeting the exact misconceptions from this assessment session.`,
+            actionType: 'drill',
+            targetTopicId: w.topicId,
+            targetTopicTitle: title
+          },
+          {
+            title: `Watch Curated Video Explanation`,
+            description: `Watch a high-yield YouTube lesson with visual derivations to rebuild your intuition.`,
+            actionType: 'video',
+            targetTopicId: w.topicId,
+            targetTopicTitle: title
+          },
+          {
+            title: `Schedule 45-min Revision Slot`,
+            description: `Add a dedicated spaced repetition block to your weekly study timetable.`,
+            actionType: 'timetable',
+            targetTopicId: w.topicId,
+            targetTopicTitle: title
+          }
+        ]
+      };
+    });
+  }
+
+  static computeQuizAnalytics(
+    evaluatedAnswers: any[],
+    questions: any[],
+    durationSeconds: number,
+    topics: any[],
+    performances: any[]
+  ): any {
+    const total = evaluatedAnswers.length || 1;
+    const correct = evaluatedAnswers.filter(a => a.isCorrect).length;
+    const scorePct = Math.round((correct / total) * 100);
+    const avgSecsPerQ = Math.round(durationSeconds / total);
+
+    const diffStats = {
+      easy: { correct: 0, total: 0 },
+      medium: { correct: 0, total: 0 },
+      hard: { correct: 0, total: 0 }
+    };
+
+    const qMap = new Map(questions.map(q => [q.id, q]));
+    evaluatedAnswers.forEach(ans => {
+      const q = qMap.get(ans.questionId);
+      const diff = (q?.difficulty || 'medium') as 'easy' | 'medium' | 'hard';
+      if (diffStats[diff]) {
+        diffStats[diff].total++;
+        if (ans.isCorrect) diffStats[diff].correct++;
+      }
+    });
+
+    const { strengths, weaknesses } = this.classifyStrengthsAndWeaknesses(performances);
+    const topicMap = new Map(topics.map(t => [t.id, t]));
+
+    const enrichedStrengths = strengths.slice(0, 4).map(s => ({
+      topicId: s.topicId,
+      topicTitle: topicMap.get(s.topicId)?.title || s.topicTitle || 'Concept',
+      accuracyPercentage: Math.round(s.accuracyPercentage || 0),
+      masteryScore: Math.round(s.masteryScore || 0)
+    }));
+
+    const enrichedWeaknesses = weaknesses.slice(0, 4).map(w => ({
+      topicId: w.topicId,
+      topicTitle: topicMap.get(w.topicId)?.title || w.topicTitle || 'Concept',
+      accuracyPercentage: Math.round(w.accuracyPercentage || 0),
+      masteryScore: Math.round(w.masteryScore || 0)
+    }));
+
+    const actionIdeas = this.generateWeakTopicActionIdeas(weaknesses, topics);
+
+    return {
+      scorePercentage: scorePct,
+      correctCount: correct,
+      totalQuestions: total,
+      durationSeconds,
+      averageSecondsPerQuestion: avgSecsPerQ,
+      difficultyBreakdown: diffStats,
+      strengths: enrichedStrengths,
+      weaknesses: enrichedWeaknesses,
+      actionIdeas
+    };
+  }
 }
